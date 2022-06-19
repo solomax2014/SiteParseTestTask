@@ -20,7 +20,7 @@ namespace SiteParseTestTask {
             Console.WriteLine("Собираем ссылки на товары...");
             var page = 0;
             var pageUrl = "https://www.toy.ru/catalog/boy_transport/?count=45&filterseccode%5B0%5D=transport";
-            var productList = new List<string>();
+            var productList = new List<string>(){};
             while (true) {
                 page++;
                 Console.WriteLine($"    Страница {page}");
@@ -34,6 +34,35 @@ namespace SiteParseTestTask {
                 if (pageUrl == null)
                     break;
             }
+
+            var csvRows = new List<string>(){"region,breadcrumbs,title,price,oldPrice,available,images,url"};
+            var concurrency = new SemaphoreSlim(8);
+            var taskList = productList.Select(url => Task.Run(async () => {
+                await concurrency.WaitAsync();
+                var csvRow = await ProcessProduct(url);
+                csvRows.Add(csvRow);
+                concurrency.Release();
+            })).ToArray();
+            Task.WaitAll(taskList);
+            //var result = String.Join("\n", csvRows);
+            //Console.WriteLine(result);
+            File.WriteAllLines("products.csv", csvRows);
+            Console.WriteLine($"Результат записан в файл products.csv, товаров: {productList.Count}");
+        }
+
+        private async Task<string> ProcessProduct(string url) {
+            Console.WriteLine($"Обрабатываем {url}");
+            var doc = await context.OpenAsync(url);
+            var region = doc.QuerySelector("div.select-city-link > a")?.TextContent.Trim();
+            var breadcrumbs = String.Join(" > ", doc.QuerySelector("nav.breadcrumb")?.Children.Where(x => x.TextContent != "Вернуться").Select(x => x.TextContent).ToList()).Replace(',', ';');
+            var title = doc.QuerySelector("h1.detail-name")?.TextContent.Replace(',', ';');
+            var price = doc.QuerySelector("span.price")?.TextContent;
+            var oldPrice = doc.QuerySelector("span.old-price")?.TextContent ?? "";
+            var available = doc.QuerySelectorAll("div.detail-block > div > div.py-2").Last()?.TextContent.Trim();
+            var images = String.Join(";", doc.QuerySelectorAll("div.detail-image img").Select(x => x.GetAttribute("src")).ToList());
+            var csvRow = $"{region},{breadcrumbs},{title},{price},{oldPrice},{available},{images},{url}";
+            //Console.WriteLine(csvRow);
+            return csvRow;
         }
     }
 }
